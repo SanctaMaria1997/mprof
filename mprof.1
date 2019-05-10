@@ -1,0 +1,164 @@
+.Dd $Mdocdate$
+.Dt mprof 1
+.Os
+.Sh 
+.Nm mprof
+.Nd Memory profiler for C programs
+.Sh SYNOPSIS
+.Nm mprof
+.Op Fl t
+.Op Fl p Ar shared-object
+.Ar my-program
+.Ar [arg1 arg2 ...]
+.Sh DESCRIPTION
+.Nm mprof
+is a utility for examining the memory usage of C programs.
+It works by patching the libc functions
+.Fn malloc ,
+.Fn calloc ,
+.Fn realloc
+and
+.Fn free ;
+these functions are replaced with equivalents that gather statistics on memory (mis)use.
+When the program has finished executing,
+.Nm mprof
+outputs a memory usage report to a file (this can be either a physical disk file or the error stream stderr).
+.Pp
+.Nm mprof
+assumes that any executable or shared objects are located in the present working directory or a subdirectory of it. The program's main executable is patched automatically; any shared objects must be patched explicitly with the
+.Op Fl p
+option.
+.Pp
+In order for
+.Nm mprof
+to debug a C program it must be an ELF executable compiled with the
+.Op Fl g
+option so that it contains DWARF debugging information.
+.Sh OPTIONS
+.Bl -tag -width indent
+.It Fl p Ar libname.so
+.Pp
+Patch the memory management functions in the shared object given by
+.Ar libname.so
+.It Fl t , Fl Fl stderr
+.Pp
+Send memory report to terminal (stderr) instead of to a disk file.
+.It Fl c , Fl Fl call-sites
+.Pp
+Treat each call to
+.Fn malloc ,
+.Fn calloc ,
+.Fn realloc
+or
+.Fn free
+as a unique entity in the memory leaks table (i.e., use address granularity rather than function granularity). Also print out the exact locations of these calls in the source code (file name and line number).
+.Sh INTERPRETING THE DATA
+.Pp
+.Nm mprof's
+output consists of three plain text tables. Each table gives a different perspective on the program's memory usage. When writing the tables to disk (the default behaviour),
+.Nm mprof
+chooses a filename of the form 
+.Dq tables.mprof.n
+where n is an integer that uniquely identifies this particular invocation of this particular target program.
+.Pp
+The following legend is used in the tables to indicate the approximate sizes of memory blocks:
+.Bl -tag -width 13n -offset indent
+.It s
+Small memory blocks; <= 32 bytes.
+.It m
+Medium memory blocks; between 33 and 256 bytes inclusive.
+.It l
+Large memory blocks; between 257 and 2048 bytes inclusive.
+.It x
+Extra large memory blocks; >= 2049 bytes.
+.El
+.Pp
+TABLE 1: ALLOCATION BINS
+.Pp
+This table breaks down the program's memory usage according to the size of the blocks allocated, ordered from smallest to largest.
+.Bl -tag -width 13n -offset indent
+.It size
+The size in bytes of the block(s) allocated.
+.It allocs
+The number of blocks of this size allocated.
+.It bytes (%)
+The total number of bytes allocated to blocks of this size. The percent column shows this figure as a percentage of the program's total heap usage.
+.It frees
+The number of blocks of this size freed.
+.It kept (%)
+The total number of bytes leaked in blocks of this size. The percent column shows this figure as a percentage of the total number of bytes leaked by the program.
+.It types
+A comma-separated list of C structures whose sizes correspond to the "size" field.
+.El
+.Pp
+TABLE 2: MEMORY LEAKS
+.Pp
+This table gives an overview of the program's leaked memory (any blocks that were allocated but never freed). By default, the leak table provides per-call-chain granularity: all leaks coming from the same chain of function calls are displayed as a single entry. For a more detailed view, use the --call-sites option. This causes mprof to treat each call site within a function as a unique allocation point with its own entry in the table. The leakiest call chains are displayed first.
+.Bl -tag -width 13n -offset indent
+.It kept bytes (%)
+The number of bytes leaked on this partial call chain. The percent column indicates the percentage of the program's total heap leakage for which this partial call chain was responsible.
+.It allocs
+The number of blocks allocated on this partial call chain.
+.It bytes (%)
+The number of bytes allocated on this partial call chain. The percent column indicates the percentage of the program's total heap usage for which this partial call chain was responsible.
+.It frees
+The number of blocks freed on this partial call chain.
+.It bytes (%)
+The number of bytes freed on this partial call chain. The percent column displays this figure as a percentage of the total number of bytes freed by the program.
+.It path
+The names of the five (or fewer) most recent function calls on this partial call chain. With the --call-sites option, this column also provides the source file names and line numbers of the function calls.
+.El
+.Pp
+TABLE 3: DIRECT ALLOCATION
+.Pp
+This table shows the memory behaviour of each function in the program.
+.Bl -tag -width 13n -offset indent
+.It % mem
+The percentage of the total memory allocated that was allocated by this function.
+.It bytes
+The number of bytes allocated by this function.
+.It % mem (size)
+A size breakdown of the memory blocks allocated by this function in terms of the memory blocks allocated by the entire program. For example, if (small == 5) and (medium == 30), this function made 5% of the program's requests for small blocks, and 30% of the program's requests for medium blocks.
+.It bytes kept
+The number of bytes allocated by this function and never freed.
+.It % all kept
+A size breakdown of the memory blocks leaked by this function in terms of the memory blocks leaked by the entire program. For example, if (small == 10) and (medium == 40), this function leaked 10% of the program's small blocks, and 40% of the program's medium blocks.
+.It calls
+The number of calls to memory management functions by this function.
+.It name
+The name of the function.
+.El
+.Pp
+.Sh EXAMPLES
+.Pp
+.It
+To debug the main executable of "my-program":
+.Pp
+.D1 mprof ./my-program
+.Pp
+To debug both the main executable of "my-program", and a library "libmy-library.so":
+.Pp
+.D1 mprof -p libmy-library.so ./my-program
+.Pp
+To debug as before, but printing report to terminal, and passing an argument to "my-program":
+.Pp
+.D1 mprof -p libmy-library.so -t ./my-program arg
+.Sh CAVEATS
+.Nm mprof
+can sometimes produce false positives for memory errors; if two objects in a process are sharing dynamically allocated memory between them, and the object that allocates the memory is not the same object that frees it,
+.Nm mprof's
+internal state can become inconsistent.
+The solution is just to patch all objects that you think are sharing memory in this way.
+.Pp
+Because most of
+.Nm mprof's
+data and code resides in the target process, there is a small but real chance that a bug such as a buffer overflow could corrupt
+.Nm mprof's
+database. Therefore you should ensure that your program is reasonably stable before analysing its memory usage with
+.Nm mprof .
+.Pp
+.Nm mprof
+debugging is costly in terms of memory.
+.Sh AUTHORS
+.Nm mprof
+was written by Alan Pilbeam in 2018/2019

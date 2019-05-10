@@ -1,0 +1,10 @@
+args.o: args.c args.h
+dugong.o: dugong.c
+dwarfy.o: dwarfy.c elf_util.h dwarfy.h
+elf_util.o: elf_util.c elf_util.h
+fish.o: fish.c
+hamster.o: hamster.c
+libmprof.o: libmprof.c dwarfy.h mprof.h libmprof.h mprof_util.h
+mprof.o: mprof.c elf_util.h mprof_util.h args.h mprof.h dwarfy.h
+mprof_util.o: mprof_util.c
+test.o: test.c
