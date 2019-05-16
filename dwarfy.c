@@ -292,6 +292,7 @@ void dwarfy_consume_DIEs(DwarfyDIEList_t *DIE_list,DwarfyCompilationUnit *compil
     spec = LIST_FIRST(&abbreviation->specs);
     
     DIE_is_function = 0;
+    function_address = 0;
     DIE_is_struct = 0;
     
     while(spec)
@@ -301,7 +302,8 @@ void dwarfy_consume_DIEs(DwarfyDIEList_t *DIE_list,DwarfyCompilationUnit *compil
           
         DIE_is_function = 1;
         if(spec->name == DW_AT_low_pc)
-          function_address = (**((unsigned long int**)address)) - DWARFY_ELF_BASE_ADDRESS + DWARFY_ELF_RUNTIME_ADDRESS;
+        {function_address = (**((unsigned long int**)address)) - DWARFY_ELF_BASE_ADDRESS + DWARFY_ELF_RUNTIME_ADDRESS;
+        }
         else if(spec->name == DW_AT_name)
         {
           if(spec->form == DW_FORM_strp)
@@ -467,7 +469,7 @@ void dwarfy_consume_DIEs(DwarfyDIEList_t *DIE_list,DwarfyCompilationUnit *compil
       spec = LIST_NEXT(spec,linkage);
     }
     
-    if(DIE_is_function)
+    if(DIE_is_function && function_address)
     {
       function = malloc(sizeof(DwarfyFunction));
       function->address = function_address;
@@ -487,6 +489,7 @@ void dwarfy_consume_DIEs(DwarfyDIEList_t *DIE_list,DwarfyCompilationUnit *compil
     }
     
     function = 0;
+    function_address = 0;
     DIE_is_function = 0;
     function_name[0] = 0;
     struct_ = 0;

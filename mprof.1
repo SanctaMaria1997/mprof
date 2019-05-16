@@ -33,7 +33,9 @@ In order for
 .Nm mprof
 to debug a C program it must be an ELF executable compiled with the
 .Op Fl g
-option so that it contains DWARF debugging information.
+option so that it contains DWARF debugging information. Note that because
+.Nm mprof
+relies on sane values in the target program's frame pointer, it will not work with optimisations enabled (the behaviour is undefined).
 .Sh OPTIONS
 .Bl -tag -width indent
 .It Fl p Ar libname.so

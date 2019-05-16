@@ -28,12 +28,18 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 */
 
+#define _GNU_SOURCE
+
 #include <signal.h>
 #include <fcntl.h>
 #include <semaphore.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <dlfcn.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,8 +85,11 @@ unsigned long int LIBMPROF_CURRENT_NUM_BYTES_MEDIUM;
 unsigned long int LIBMPROF_CURRENT_NUM_BYTES_LARGE;
 unsigned long int LIBMPROF_CURRENT_NUM_BYTES_XLARGE;
 
-FILE *MPROF_OUTPUT_FILE;
+int MPROF_OUTPUT_FILE;
 char MPROF_OUTPUT_FILE_NAME[256];
+
+int MPROF_DEBUGGER;
+char MPROF_DEBUGGER_NAME[256];
 
 sem_t *MPROF_INSTANCE;
 
@@ -135,8 +144,10 @@ int compare_function_breakdowns(FunctionBreakdown *fb1,FunctionBreakdown *fb2)
 void  __attribute__((constructor)) libmprof_init()
 {
   int i = 0,j = 0,m = 0;
+  int proj;
+  int instance;
   char name[256];
-
+  
   LIBMPROF_NUM_MALLOCS = LIBMPROF_NUM_CALLOCS = LIBMPROF_NUM_REALLOCS = LIBMPROF_NUM_FREES = 0;
   
   LIBMPROF_NUM_ALLOCATIONS_SMALL = LIBMPROF_NUM_ALLOCATIONS_MEDIUM = LIBMPROF_NUM_ALLOCATIONS_LARGE = LIBMPROF_NUM_ALLOCATIONS_XLARGE = LIBMPROF_NUM_FREES_SMALL = LIBMPROF_NUM_FREES_MEDIUM = LIBMPROF_NUM_FREES_LARGE = LIBMPROF_NUM_FREES_XLARGE = 0;
@@ -152,24 +163,24 @@ void  __attribute__((constructor)) libmprof_init()
   RB_INIT(&TRANSACTION_POINTS);
   RB_INIT(&MEMORY_BREAKDOWNS);
   RB_INIT(&FUNCTION_BREAKDOWNS);
-  
-  
-  
-  int proj;
-    int instance;
 
   MPROF_INSTANCE = sem_open("/mprof_instance",O_CREAT,0666,0);
   sem_getvalue(MPROF_INSTANCE,&instance);
   
   sprintf(MPROF_OUTPUT_FILE_NAME,"tables.mprof.%d",instance);
   SHMID = shmget(ftok(MPROF_OUTPUT_FILE_NAME,1),sizeof(LibmprofSharedMem),0666);
-
   LIBMPROF_SHARED_MEM = shmat(SHMID,0,0);
   
+  sprintf(MPROF_DEBUGGER_NAME,"mprof_debugger.%d",instance);
+  MPROF_DEBUGGER = open(MPROF_DEBUGGER_NAME,O_RDWR);
+    
   if(LIBMPROF_SHARED_MEM->config.output_to_stderr)
-    MPROF_OUTPUT_FILE = stderr;
+    MPROF_OUTPUT_FILE = MPROF_DEBUGGER;
   else
-    MPROF_OUTPUT_FILE = fopen(MPROF_OUTPUT_FILE_NAME,"w");
+  {
+    MPROF_OUTPUT_FILE = open(MPROF_OUTPUT_FILE_NAME,O_WRONLY);
+    //perror("lala");
+  }
   
   sem_post(MPROF_INSTANCE);
   raise(SIGTRAP);
@@ -269,17 +280,25 @@ void trace_(unsigned long int *frame_pointer,char **trace,int length,int depth)
   char location[256];
   char *new_trace;
   char *elipsis = "...";  
-  
+  Dl_info info;
+
   address = *(frame_pointer + 1);
-
+  
+  if(0 == dladdr(address,&info))
+  {
+    puts("[mprof] Invalid frame pointer detected; consider recompiling this program without optimisations.");
+    exit(1);
+  }
+  
   function = address_to_function(address);
-
   compilation_unit = address_to_compilation_unit(address);
   source_record = address_to_source_record(address);
+
   if(LIBMPROF_SHARED_MEM->config.call_sites)
     sprintf(location," [%s:%d] ",compilation_unit->file_names[source_record->file - 1],source_record->line_number);
   else
     sprintf(location," ");
+  
   new_trace = malloc(length + strlen(function->name) + strlen(location) + 8);
   strcpy(new_trace,function->name);
   strcat(new_trace,"()");
@@ -302,7 +321,9 @@ void trace_(unsigned long int *frame_pointer,char **trace,int length,int depth)
     }
   }
   else if(strcmp(function->name,"main"))
+  {
     trace_((unsigned long int*)*frame_pointer,trace,strlen(*trace),depth + 1);
+  }
 }
 
 void update_alloc_bins(size_t size)
@@ -573,6 +594,7 @@ void *calloc_wrapper(size_t num,size_t size)
   
   trace = malloc(1);
   strcpy(trace,"");
+  
   trace_(frame_pointer,&trace,strlen(trace) + 1,0);
 
   return_address = *(frame_pointer + 1);
@@ -638,6 +660,7 @@ void *realloc_wrapper(void *ptr,size_t size)
   
   trace = malloc(1);
   strcpy(trace,"");
+  
   trace_(frame_pointer,&trace,strlen(trace) + 1,0);
 
   return_address = *(frame_pointer + 1);
@@ -789,21 +812,34 @@ void free_wrapper(void *ptr)
 
 __attribute__((destructor)) void libmprof_final()
 {
+  char buffer[512];
   fprintf(stderr,"\n[mprof] MEMORY STATISTICS\n");
   
   memory_breakdown_table_out();
   leak_table_out();
   function_breakdown_table_out();
 
-  fprintf(stderr,"[mprof] Memory usage summary:\n");
-  fprintf(stderr,"[mprof] Program allocated %ld block(s)\n",LIBMPROF_TOTAL_NUM_TRANSACTIONS);
-  fprintf(stderr,"[mprof] (malloc: %ld, calloc: %ld, realloc: %ld)\n",LIBMPROF_NUM_MALLOCS,LIBMPROF_NUM_CALLOCS,LIBMPROF_NUM_REALLOCS);
-  fprintf(stderr,"[mprof] Program freed %ld block(s)\n",LIBMPROF_NUM_FREES);
+  sprintf(buffer,"[mprof] Memory usage summary:\n");
+  write(MPROF_DEBUGGER,buffer,strlen(buffer));
+  
+  sprintf(buffer,"[mprof] Program allocated %ld block(s)\n",LIBMPROF_TOTAL_NUM_TRANSACTIONS);
+  write(MPROF_DEBUGGER,buffer,strlen(buffer));
+  
+  sprintf(buffer,"[mprof] (malloc: %ld, calloc: %ld, realloc: %ld)\n",LIBMPROF_NUM_MALLOCS,LIBMPROF_NUM_CALLOCS,LIBMPROF_NUM_REALLOCS);
+  write(MPROF_DEBUGGER,buffer,strlen(buffer));
+  
+  sprintf(buffer,"[mprof] Program freed %ld block(s)\n",LIBMPROF_NUM_FREES);
+  write(MPROF_DEBUGGER,buffer,strlen(buffer));
+  
   if(0 == LIBMPROF_SHARED_MEM->config.output_to_stderr)
-    fprintf(stderr,"[mprof] For detailed memory usage statistics, consult the file \"%s\".\n",MPROF_OUTPUT_FILE_NAME);
+  {
+    sprintf(buffer,"[mprof] For detailed memory usage statistics, consult the file \"%s\".\n",MPROF_OUTPUT_FILE_NAME);
+    write(MPROF_DEBUGGER,buffer,strlen(buffer));
+  }
 
   shmdt(LIBMPROF_SHARED_MEM);
-  fclose(MPROF_OUTPUT_FILE);
+  close(MPROF_OUTPUT_FILE);
+  close(MPROF_DEBUGGER);
 }
 
 DwarfySourceRecord *address_to_source_record(unsigned long int address)
@@ -909,15 +945,18 @@ void memory_breakdown_table_out()
   DwarfyCompilationUnit *compilation_unit;
   DwarfyStruct *struct_;
   MemoryBreakdown *memory_breakdown;
+  char buffer[512];
   char percentage1_buff[4];
   char percentage2_buff[4];
   char *struct_list;
   int struct_list_length;
   int i;
   
-  fprintf(MPROF_OUTPUT_FILE,"[mprof] TABLE 1: ALLOCATION BINS\n\n");
-  fprintf(MPROF_OUTPUT_FILE,"%10s %10s %10s %4s %10s %10s %4s %s\n","size","allocs", "bytes","(%)","frees","kept","(%)","    types");
- 
+  sprintf(buffer,"[mprof] TABLE 1: ALLOCATION BINS\n\n");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
+  sprintf(buffer,"%10s %10s %10s %4s %10s %10s %4s %s\n","size","allocs", "bytes","(%)","frees","kept","(%)","    types");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
+
   struct_list = malloc(1);
   struct_list[0] = 0;
   struct_list_length = 0;
@@ -952,7 +991,7 @@ void memory_breakdown_table_out()
       i++;
     }
     
-    fprintf(MPROF_OUTPUT_FILE,"%10lu %10lu %10lu %4s %10lu %10lu %4s     %s\n",
+    sprintf(buffer,"%10lu %10lu %10lu %4s %10lu %10lu %4s     %s\n",
     memory_breakdown->size,
     memory_breakdown->total_num_allocs,
     memory_breakdown->total_bytes_allocated,
@@ -961,26 +1000,35 @@ void memory_breakdown_table_out()
     memory_breakdown->current_bytes_allocated,
     percentage_as_string(memory_breakdown->total_bytes_allocated,LIBMPROF_TOTAL_BYTES_ALLOCATED - LIBMPROF_TOTAL_BYTES_FREED,percentage2_buff),
     struct_list);
+    write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
     struct_list = realloc(struct_list,1);
     struct_list[0] = 0;
     struct_list_length = 0;
   }
-  fprintf(MPROF_OUTPUT_FILE,"\n");
+  
+  sprintf(buffer,"\n");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
 }
 
 void function_breakdown_table_out()
 {
   FunctionBreakdown *function_breakdown;
+  char buffer[512];
   char percentage1_buff[4];
   char percentage2_buff[4];
   char percentage3_buff[4];
   char percentage4_buff[4];
   char alloc_size_breakdown[32];
   char leak_size_breakdown[32];
-
-  fprintf(MPROF_OUTPUT_FILE,"[mprof] TABLE 3: DIRECT_ALLOCATION\n\n");
-  fprintf(MPROF_OUTPUT_FILE,"%12s %12s %16s %12s %16s %12s %s\n","% mem","bytes","% mem(size)","bytes kept","% all kept","calls","    name");
-  fprintf(MPROF_OUTPUT_FILE,"                             s   m   l   x                 s   m   l   x\n");
+  
+  sprintf(buffer,"[mprof] TABLE 3: DIRECT_ALLOCATION\n\n");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
+  
+  sprintf(buffer,"%12s %12s %16s %12s %16s %12s %s\n","% mem","bytes","% mem(size)","bytes kept","% all kept","calls","    name");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
+  
+  sprintf(buffer,"                             s   m   l   x                 s   m   l   x\n");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
   
   RB_FOREACH(function_breakdown,FunctionBreakdownTree,&FUNCTION_BREAKDOWNS)
   {
@@ -997,7 +1045,7 @@ void function_breakdown_table_out()
             percentage_as_string(function_breakdown->current_large_bytes_allocated,LIBMPROF_TOTAL_BYTES_ALLOCATED - LIBMPROF_TOTAL_BYTES_FREED,percentage3_buff),
             percentage_as_string(function_breakdown->current_xlarge_bytes_allocated,LIBMPROF_TOTAL_BYTES_ALLOCATED - LIBMPROF_TOTAL_BYTES_FREED,percentage4_buff));
     
-    fprintf(MPROF_OUTPUT_FILE,"%12s %12lu %16s %12lu %16s %12lu     %s()\n",
+    sprintf(buffer,"%12s %12lu %16s %12lu %16s %12lu     %s()\n",
     percentage_as_string(function_breakdown->total_bytes_allocated,LIBMPROF_TOTAL_BYTES_ALLOCATED,percentage1_buff),
     function_breakdown->total_bytes_allocated,
     alloc_size_breakdown,
@@ -1005,8 +1053,10 @@ void function_breakdown_table_out()
     leak_size_breakdown,
     function_breakdown->num_calls,
     function_breakdown->name);
+    write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
   }
-  fprintf(MPROF_OUTPUT_FILE,"\n");
+  sprintf(buffer,"\n");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
 }
 
 void leak_table_out()
@@ -1014,6 +1064,7 @@ void leak_table_out()
   TransactionPoint *transaction_point;
   TransactionPath *transaction_path;
   TransactionPathSorted *transaction_path_sorted;
+  char buffer[512];
   char percentage1_buff[4];
   char percentage2_buff[4];
   char percentage3_buff[4];
@@ -1023,9 +1074,11 @@ void leak_table_out()
   TransactionPathSortedTree_t sorted_generic_tree;
   TransactionPathSorted *sorted;
 
-  fprintf(MPROF_OUTPUT_FILE,"[mprof] TABLE 2: MEMORY LEAKS\n\n");
-  fprintf(MPROF_OUTPUT_FILE,"%10s %4s%10s%10s %4s%10s%10s %4s     %s\n","kept bytes", "(%)","allocs", "bytes", "(%)","frees", "bytes", "(%)", "path");
+  sprintf(buffer,"[mprof] TABLE 2: MEMORY LEAKS\n\n");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
   
+  sprintf(buffer,"%10s %4s%10s%10s %4s%10s%10s %4s     %s\n","kept bytes", "(%)","allocs", "bytes", "(%)","frees", "bytes", "(%)", "path");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
   
     RB_INIT(&sorted_generic_tree);
     
@@ -1044,7 +1097,7 @@ void leak_table_out()
     
     RB_FOREACH(transaction_path_sorted,TransactionPathSortedTree,&sorted_generic_tree)
     {
-      fprintf(MPROF_OUTPUT_FILE,"%10lu %4s%10lu%10lu %4s%10lu%10lu %4s     %s\n",
+      sprintf(buffer,"%10lu %4s%10lu%10lu %4s%10lu%10lu %4s     %s\n",
       transaction_path_sorted->current_bytes_allocated,
       percentage_as_string(transaction_path_sorted->current_bytes_allocated,LIBMPROF_TOTAL_BYTES_ALLOCATED - LIBMPROF_TOTAL_BYTES_FREED,percentage1_buff),
 
@@ -1059,6 +1112,9 @@ void leak_table_out()
       percentage_as_string(transaction_path_sorted->total_bytes_freed,LIBMPROF_TOTAL_BYTES_FREED,percentage3_buff),
 
       transaction_path_sorted->name);    
+      write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
   }
-  fprintf(MPROF_OUTPUT_FILE,"\n");
+  sprintf(buffer,"\n");
+  write(MPROF_OUTPUT_FILE,buffer,strlen(buffer));
 }
+

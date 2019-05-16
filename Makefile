@@ -7,9 +7,9 @@ mprof.o: mprof.c
 args.o: args.c
 	cc -g -c args.c -o args.o
 libmprof.so: libmprof.o dwarfy.o mprof_util.o elf_util.o
-	cc -g -shared -fPIC libmprof.o dwarfy.o mprof_util.o elf_util.o -o libmprof.so -lm
+	cc -g -shared -fPIC libmprof.o dwarfy.o mprof_util.o elf_util.o -o libmprof.so -lm -ldl
 libmprof.o: libmprof.c
-	cc -g -c -DFREEBSD -fPIC libmprof.c -o libmprof.o
+	cc -g -c -DFREEBSD -fPIC libmprof.c -o libmprof.o -ldl
 dwarfy.o: dwarfy.c
 	cc -g -c -DFREEBSD -fPIC dwarfy.c -o dwarfy.o
 mprof_util.o: mprof_util.c
@@ -40,4 +40,4 @@ install-example:
 depend:
 	cc -E -MM *.c > .depend
 clean:
-	@rm *.o *.so mprof mprof.1.gz
+	@rm *.o *.so mprof example mprof.1.gz

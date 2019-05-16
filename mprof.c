@@ -36,6 +36,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/shm.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <semaphore.h>
 #include <fcntl.h>
 #include <sys/ptrace.h>
@@ -69,8 +72,11 @@ int SHMID;
 int LIBMPROF_NUM_PATCHED_LIBS;
 Library *lookup_library(char *name);
 
-FILE *MPROF_OUTPUT_FILE;
+int MPROF_OUTPUT_FILE;
 char MPROF_OUTPUT_FILE_NAME[256];
+
+int MPROF_DEBUGGER;
+char MPROF_DEBUGGER_NAME[256];
 
 sem_t *MPROF_INSTANCE;
 sem_t *MPROF_MUTEX;
@@ -258,20 +264,25 @@ int main(int argc,char **argv)
   NonOption non_options[MAX_NUM_NON_OPTIONS];
   int proj;
   int instance;
-  
+  int num_bytes;
   int i,j;
+  char buffer[512];
 
   MPROF_MUTEX = sem_open("/mprof_mutex",O_CREAT,0666,1);
   MPROF_INSTANCE = sem_open("/mprof_instance",O_CREAT,0666,0);
-  
   sem_getvalue(MPROF_INSTANCE,&instance);
   sem_getvalue(MPROF_MUTEX,&proj);
   sem_wait(MPROF_MUTEX);
   sem_getvalue(MPROF_MUTEX,&proj);
-
+  sprintf(MPROF_DEBUGGER_NAME,"mprof_debugger.%d",instance);
+  
+  int res = mkfifo(MPROF_DEBUGGER_NAME,0666);
+  
+  MPROF_DEBUGGER = open(MPROF_DEBUGGER_NAME,O_RDONLY | O_NONBLOCK);
+  
   sprintf(MPROF_OUTPUT_FILE_NAME,"tables.mprof.%d",instance);
-  MPROF_OUTPUT_FILE = fopen(MPROF_OUTPUT_FILE_NAME,"w");
-  fclose(MPROF_OUTPUT_FILE);
+  MPROF_OUTPUT_FILE = open(MPROF_OUTPUT_FILE_NAME,O_RDONLY | O_CREAT);
+  close(MPROF_OUTPUT_FILE);
   
   SHMID = shmget(ftok(MPROF_OUTPUT_FILE_NAME,1),sizeof(LibmprofSharedMem),IPC_CREAT | 0666);
   LIBMPROF_SHARED_MEM = shmat(SHMID,0,0);
@@ -326,7 +337,7 @@ int main(int argc,char **argv)
 #elif defined(FREEBSD)
         exect(target_name,argv + non_options[0].index,environ);
 #endif
-        fprintf(stderr,"[mprof] Unable to lauch program %s.\n",target_name);
+        fprintf(stderr,"[mprof] Unable to launch program %s.\n",target_name);
         exit(1);
         break;
       }
@@ -335,7 +346,7 @@ int main(int argc,char **argv)
         waitpid(pid,&status,0);
         ptrace(PTRACE_CONT,pid,(caddr_t)1,0);
         waitpid(pid,&status,0);
-        
+
         load_mem_regions(pid);
         
         libmprof = lookup_library("libmprof.so");
@@ -355,7 +366,7 @@ int main(int argc,char **argv)
           fprintf(stderr,"[mprof] Unable to load ELF file \"%s\".",libmprof->name);
           exit(1);
         }
-        
+
         patch_mem_functions(pid,target,libmprof);
         
         for(i = 0; i < LIBMPROF_NUM_PATCHED_LIBS; i++)
@@ -380,7 +391,7 @@ int main(int argc,char **argv)
               j++;
             }          
         }
-        
+
         ptrace(PTRACE_CONT,pid,(caddr_t)1,0);
         
         for(;;)
@@ -399,14 +410,25 @@ int main(int argc,char **argv)
        }
      }
   }
-
+  
+  fprintf(stderr,"[mprof] Program exited with code %d.\n",result);
+  
+  memset(buffer,0,512);
+  
+  while(num_bytes = read(MPROF_DEBUGGER,buffer,512))
+  {
+    buffer[num_bytes] = '\0';
+    fprintf(stderr,"%s",buffer);
+  }
+  
+  unlink(MPROF_DEBUGGER_NAME);
+    
   if(LIBMPROF_SHARED_MEM->config.output_to_stderr)
     remove(MPROF_OUTPUT_FILE_NAME);
   
   shmdt(LIBMPROF_SHARED_MEM);
   shmctl(SHMID,IPC_RMID,0);
 
-  fprintf(stderr,"[mprof] Program exited with code %d.\n",result);
   return 0;
 }
 
