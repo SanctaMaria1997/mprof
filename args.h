@@ -50,9 +50,14 @@ typedef struct
 typedef struct
 {
   char name[256];
+  char short_name[256];
   int takes_arg;
 } OptionSpec;
 
-int handle_options(int argc,char **argv,OptionSpec *available_options,Option *options,NonOption *non_options);
+void register_options(OptionSpec *ao);
+int parse_options(int argc,char **argv);
+Option *get_options();
+NonOption *get_non_options();
+int option_is(char *name,Option *option);
 
 #endif

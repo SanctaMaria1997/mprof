@@ -226,6 +226,6 @@ char *dwarfy_tag_to_string(unsigned long int tag);
 char *dwarfy_attribute_to_string(unsigned long int attribute);
 char *dwarfy_form_to_string(unsigned long int form);
 DwarfyCompilationUnit *address_to_compilation_unit(unsigned long int address);
-DwarfyFunction *address_to_function(unsigned long int address);
-DwarfySourceRecord *address_to_source_record(unsigned long int address);
+DwarfyFunction *address_to_function(unsigned long int address,DwarfyCompilationUnit *compilation_unit);
+DwarfySourceRecord *address_to_source_record(unsigned long int address,DwarfyCompilationUnit *compilation_unit);
 #endif

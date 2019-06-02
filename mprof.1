@@ -25,9 +25,7 @@ When the program has finished executing,
 outputs a memory usage report to a file (this can be either a physical disk file or the error stream stderr).
 .Pp
 .Nm mprof
-assumes that any executable or shared objects are located in the present working directory or a subdirectory of it. The program's main executable is patched automatically; any shared objects must be patched explicitly with the
-.Op Fl p
-option.
+assumes that any executable or shared objects that should be patched are located in the present working directory or a subdirectory of it.
 .Pp
 In order for
 .Nm mprof
@@ -38,10 +36,9 @@ option so that it contains DWARF debugging information. Note that because
 relies on sane values in the target program's frame pointer, it will not work with optimisations enabled (the behaviour is undefined).
 .Sh OPTIONS
 .Bl -tag -width indent
-.It Fl p Ar libname.so
+.It Fl s , Fl Fl structs
 .Pp
-Patch the memory management functions in the shared object given by
-.Ar libname.so
+Print out the names of C structures that correspond in size to allocated memory blocks.
 .It Fl t , Fl Fl stderr
 .Pp
 Send memory report to terminal (stderr) instead of to a disk file.
@@ -138,19 +135,15 @@ To debug the main executable of "my-program":
 .Pp
 .D1 mprof ./my-program
 .Pp
-To debug both the main executable of "my-program", and a library "libmy-library.so":
-.Pp
-.D1 mprof -p libmy-library.so ./my-program
-.Pp
 To debug as before, but printing report to terminal, and passing an argument to "my-program":
 .Pp
-.D1 mprof -p libmy-library.so -t ./my-program arg
+.D1 mprof -t ./my-program arg
 .Sh CAVEATS
 .Nm mprof
 can sometimes produce false positives for memory errors; if two objects in a process are sharing dynamically allocated memory between them, and the object that allocates the memory is not the same object that frees it,
 .Nm mprof's
 internal state can become inconsistent.
-The solution is just to patch all objects that you think are sharing memory in this way.
+The solution is just to patch all objects that you think are sharing memory in this way. You can do this by copying the relevant .so files into the present working directory.
 .Pp
 Because most of
 .Nm mprof's

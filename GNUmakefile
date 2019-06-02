@@ -9,7 +9,7 @@ args.o: args.c args.h
 libmprof.so: libmprof.o dwarfy.o mprof_util.o elf_util.o
 	cc -g -shared -fPIC libmprof.o dwarfy.o mprof_util.o elf_util.o -o libmprof.so -lm -ldl -pthread
 libmprof.o: libmprof.c libmprof.h mprof.h mprof_util.h dwarfy.h
-	cc -g -c -fPIC -DLINUX libmprof.c -o libmprof.o -ldl
+	cc -g -c -fPIC -DLINUX libmprof.c -o libmprof.o -ldl `pkg-config --libs --cflags gtk+-3.0`
 dwarfy.o: dwarfy.c dwarfy.h elf_util.h
 	cc -g -c -fPIC -DLINUX dwarfy.c -o dwarfy.o
 mprof_util.o: mprof_util.c

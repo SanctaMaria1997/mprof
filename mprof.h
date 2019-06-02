@@ -49,6 +49,8 @@ typedef struct
 {
   unsigned int call_sites;
   unsigned int output_to_stderr;
+  unsigned int gnu;
+  unsigned int structs;
 } LibmprofConfig; 
 
 typedef struct

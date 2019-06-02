@@ -32,11 +32,23 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdio.h>
 #include <string.h>
 
-int handle_options(int argc,char **argv,OptionSpec *available_options,Option *options,NonOption *non_options)
+OptionSpec *available_options;
+Option options[MAX_NUM_OPTIONS];
+NonOption non_options[MAX_NUM_NON_OPTIONS];
+
+void register_options(OptionSpec *ao)
+{
+  available_options = ao;
+}
+
+int parse_options(int argc,char **argv)
 {
   int valid_option = 0;
   int expect_arg = 0;
   int i,j,k,l;
+  
+  memset(options,0,MAX_NUM_OPTIONS * sizeof(Option));
+  memset(non_options,0,MAX_NUM_NON_OPTIONS * sizeof(NonOption));
   
   i = j = k = l = 0;
   
@@ -48,7 +60,7 @@ int handle_options(int argc,char **argv,OptionSpec *available_options,Option *op
       valid_option = 0;
       while(strlen(available_options[j].name))
       {
-        if(!strcmp(argv[i],available_options[j].name))
+        if(0 == strcmp(argv[i],available_options[j].name) || 0 == strcmp(argv[i],available_options[j].short_name))
         {
           valid_option = 1;
           break;
@@ -87,4 +99,31 @@ int handle_options(int argc,char **argv,OptionSpec *available_options,Option *op
     }
   }
   return 1;
+}
+
+Option *get_options()
+{
+  return options;
+}
+
+NonOption *get_non_options()
+{
+  return non_options;
+}
+
+int option_is(char *name,Option *option)
+{
+  int i = 0;
+  while(strlen(available_options[i].name))
+  {
+    if(0 == strcmp(name,available_options[i].name) || 0 == strcmp(name,available_options[i].short_name))
+    {
+      if(0 == strcmp(option->option,available_options[i].name) || 0 == strcmp(option->option,available_options[i].short_name))
+      {
+        return 1;
+      }
+    }
+    i++;
+  }
+  return 0;
 }

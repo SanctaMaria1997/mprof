@@ -35,11 +35,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdio.h>
 #include <string.h>
 
+//#include "dwarfy.h"
+//#include "mprof.h"
+
 char *REQUESTED_FILE_NAME;
 char *MATCHING_FILE_PATH;
 int FILE_PATH_EXISTS;
 
-char *file_part(char *path)
+const char *file_part(const char *path)
 {
   int last_slash = 0;
   int i;
@@ -79,3 +82,17 @@ char *find_file(char *file_name,char *directory)
   else
     return "";
 }
+
+/*
+Library *lookup_library(char *name)
+{
+  int i = 0;
+
+  while(strlen(LIBMPROF_SHARED_MEM->libraries[i].name))
+  {
+    if(!strcmp(file_part(LIBMPROF_SHARED_MEM->libraries[i].name),file_part(name)))
+      return &LIBMPROF_SHARED_MEM->libraries[i];
+    i++;
+  }
+  return 0;
+}*/

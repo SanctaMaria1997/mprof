@@ -36,9 +36,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/shm.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include <semaphore.h>
 #include <fcntl.h>
 #include <sys/ptrace.h>
@@ -72,14 +69,12 @@ int SHMID;
 int LIBMPROF_NUM_PATCHED_LIBS;
 Library *lookup_library(char *name);
 
-int MPROF_OUTPUT_FILE;
+FILE *MPROF_OUTPUT_FILE;
 char MPROF_OUTPUT_FILE_NAME[256];
-
-int MPROF_DEBUGGER;
-char MPROF_DEBUGGER_NAME[256];
 
 sem_t *MPROF_INSTANCE;
 sem_t *MPROF_MUTEX;
+sem_t *MPROF_MEM_MUTEX;
 
 void patch_function(pid_t pid,unsigned long int orig,unsigned long int wrapper)
 {
@@ -96,32 +91,47 @@ void patch_function(pid_t pid,unsigned long int orig,unsigned long int wrapper)
 
 void patch_mem_functions(pid_t pid,Library *destination,Library *source)
 {
-  unsigned long int relocation;
+  char *libc_functions[] = {"malloc","calloc","realloc","free",""};
+  char *gnu_functions[] = {"g_malloc","g_malloc0","g_realloc","g_try_malloc","g_try_malloc0","g_try_realloc","g_malloc_n","malloc0_n","g_realloc_n","g_free",""};
 
-  if((relocation = get_elf_relocation(destination->elf,"malloc")))
+  char **functions;
+  char patch[256];
+  unsigned long int relocation;
+  int i;
+  
+  if(LIBMPROF_SHARED_MEM->config.gnu)
+    functions = gnu_functions;
+  else
+    functions = libc_functions;
+  
+  i = 0;
+  
+  while(0 != strcmp(functions[i],""))
   {
-    patch_function(pid,
-                   relocation - get_elf_base_address(destination->elf) + destination->base_address,
-                   get_elf_symbol(source->elf,"malloc_wrapper") - get_elf_base_address(source->elf) + source->base_address);
-  } 
-  if((relocation = get_elf_relocation(destination->elf,"calloc")))
-  {
-    patch_function(pid,
-                   relocation - get_elf_base_address(destination->elf) + destination->base_address,
-                   get_elf_symbol(source->elf,"calloc_wrapper") - get_elf_base_address(source->elf) + source->base_address);
+    strcpy(patch,"mprof");
+    strcat(patch,"_");
+    strcat(patch,functions[i]);
+    
+    if((relocation = get_elf_relocation(destination->elf,functions[i])))
+      patch_function(pid,
+                    relocation - get_elf_base_address(destination->elf) + destination->base_address,
+                    get_elf_symbol(source->elf,patch) - get_elf_base_address(source->elf) + source->base_address);
+    i++;
   }
-  if((relocation = get_elf_relocation(destination->elf,"realloc")))
-  {
-    patch_function(pid,
-                   relocation - get_elf_base_address(destination->elf) + destination->base_address,
-                   get_elf_symbol(source->elf,"realloc_wrapper") - get_elf_base_address(source->elf) + source->base_address);
-  }
-  if((relocation = get_elf_relocation(destination->elf,"free")))
-  {
-    patch_function(pid,
-                   relocation - get_elf_base_address(destination->elf) + destination->base_address,
-                   get_elf_symbol(source->elf,"free_wrapper") - get_elf_base_address(source->elf) + source->base_address);
-  }
+}
+
+void strip_so_version_num(char *st)
+{
+    int z = 0;
+    while(st[z] != 0)
+    {;
+      if(st[z] == '.' && st[z+1] == 's' && st[z+2] == 'o')
+      {
+        st[z+3] = 0;
+        break;
+      }
+      z++;
+    }
 }
 
 #ifdef LINUX
@@ -200,9 +210,11 @@ void load_mem_regions(pid_t pid)
     
     strcpy(LIBMPROF_SHARED_MEM->libraries[k].name,file_part(module_path));
     
+    strip_so_version_num(LIBMPROF_SHARED_MEM->libraries[k].name);
+    
     k++;
     skip:
-    i++;
+    k;
 
   } while(!feof(vm_maps)); 
 
@@ -238,7 +250,7 @@ void load_mem_regions(pid_t pid)
     
     LIBMPROF_SHARED_MEM->libraries[k].base_address = (unsigned long int)(entry.pve_start);
     strcpy(LIBMPROF_SHARED_MEM->libraries[k].name,file_part(mmm));
-    
+    strip_so_version_num(LIBMPROF_SHARED_MEM->libraries[k].name);
     k++;
     skip:
     i++;
@@ -256,33 +268,31 @@ int main(int argc,char **argv)
   int status;
   char target_name[512];
   Library *target,*libmprof;
-  OptionSpec available_options[] = {{"--patch",1},{"-p",1},
-                                     {"--stderr",0},{"-t",0},
+  /*OptionSpec available_options[] = {{"--stderr",0},{"-t",0},
                                      {"--call-sites",0},{"-c",0},
+                                     {"--gnu",0},{"-g",0},
+                                     {"--structs",0},{"-s",0},
                                      {"",0}};
-  Option options[MAX_NUM_OPTIONS];
-  NonOption non_options[MAX_NUM_NON_OPTIONS];
+                                     */
+  Option *options;
+  NonOption *non_options;
   int proj;
   int instance;
-  int num_bytes;
+  
   int i,j;
-  char buffer[512];
-
+  
   MPROF_MUTEX = sem_open("/mprof_mutex",O_CREAT,0666,1);
   MPROF_INSTANCE = sem_open("/mprof_instance",O_CREAT,0666,0);
+  MPROF_MEM_MUTEX = sem_open("/MPROF_MEM_MUTEX",O_CREAT,0666,1);
+  
   sem_getvalue(MPROF_INSTANCE,&instance);
   sem_getvalue(MPROF_MUTEX,&proj);
   sem_wait(MPROF_MUTEX);
   sem_getvalue(MPROF_MUTEX,&proj);
-  sprintf(MPROF_DEBUGGER_NAME,"mprof_debugger.%d",instance);
-  
-  int res = mkfifo(MPROF_DEBUGGER_NAME,0666);
-  
-  MPROF_DEBUGGER = open(MPROF_DEBUGGER_NAME,O_RDONLY | O_NONBLOCK);
-  
+
   sprintf(MPROF_OUTPUT_FILE_NAME,"tables.mprof.%d",instance);
-  MPROF_OUTPUT_FILE = open(MPROF_OUTPUT_FILE_NAME,O_RDONLY | O_CREAT);
-  close(MPROF_OUTPUT_FILE);
+  MPROF_OUTPUT_FILE = fopen(MPROF_OUTPUT_FILE_NAME,"w");
+  fclose(MPROF_OUTPUT_FILE);
   
   SHMID = shmget(ftok(MPROF_OUTPUT_FILE_NAME,1),sizeof(LibmprofSharedMem),IPC_CREAT | 0666);
   LIBMPROF_SHARED_MEM = shmat(SHMID,0,0);
@@ -292,32 +302,47 @@ int main(int argc,char **argv)
   
   LIBMPROF_NUM_PATCHED_LIBS = 0;
 
-  memset(options,0,MAX_NUM_OPTIONS * sizeof(Option));
-  memset(non_options,0,MAX_NUM_NON_OPTIONS * sizeof(NonOption));
+  OptionSpec available_options[] = {{"--stderr","-t",0},
+                     {"--call-sites","-c",0},
+                     {"--gnu","-g",0},
+                     {"--structs","-s",0},
+                     {"","",0}};
+                     
+  register_options(available_options);
   
-  handle_options(argc,argv,available_options,options,non_options);
+  parse_options(argc,argv);
+  options = get_options();
+  non_options = get_non_options();
   
   i = 0;
 
   while(i < non_options[0].index && strlen(options[i].option))
   {
-    if(!strcmp(options[i].option,"--patch") || !strcmp(options[i].option,"-p"))
+    if(option_is("--stderr",&options[i]))
     {
-      strcpy(LIBMPROF_SHARED_MEM->patched_lib_names[LIBMPROF_NUM_PATCHED_LIBS],options[i].argument);
-      LIBMPROF_NUM_PATCHED_LIBS++;
-    }
-    else if(!strcmp(options[i].option,"--stderr") || !strcmp(options[i].option,"-t"))
-    {
+      printf("[mprof] Printing to terminal...\n");
       LIBMPROF_SHARED_MEM->config.output_to_stderr = 1;
     }
-    else if(!strcmp(options[i].option,"--call-sites") || !strcmp(options[i].option,"-c"))
+    else if(option_is("--call-sites",&options[i]))
     {
+      printf("[mprof] Call sites enabled...\n");
       LIBMPROF_SHARED_MEM->config.call_sites = 1;
+    }
+    else if(option_is("--gnu",&options[i]))
+    {
+      printf("[mprof] Patching GNU glib memory management functions only...\n");
+      LIBMPROF_SHARED_MEM->config.gnu = 1;
+    }
+    else if(option_is("--structs",&options[i]))
+    {
+      printf("[mprof] Printing corresponding source code structs...\n");
+      LIBMPROF_SHARED_MEM->config.structs = 1;
     }
     i++;
   }
   
   strcpy(target_name,non_options[0].text);
+  
   strcpy(LIBMPROF_SHARED_MEM->patched_lib_names[LIBMPROF_NUM_PATCHED_LIBS],target_name);
   LIBMPROF_NUM_PATCHED_LIBS++;
   
@@ -337,7 +362,7 @@ int main(int argc,char **argv)
 #elif defined(FREEBSD)
         exect(target_name,argv + non_options[0].index,environ);
 #endif
-        fprintf(stderr,"[mprof] Unable to launch program %s.\n",target_name);
+        fprintf(stderr,"[mprof] Unable to launch program (%s).\n",target_name);
         exit(1);
         break;
       }
@@ -346,7 +371,7 @@ int main(int argc,char **argv)
         waitpid(pid,&status,0);
         ptrace(PTRACE_CONT,pid,(caddr_t)1,0);
         waitpid(pid,&status,0);
-
+        
         load_mem_regions(pid);
         
         libmprof = lookup_library("libmprof.so");
@@ -366,36 +391,38 @@ int main(int argc,char **argv)
           fprintf(stderr,"[mprof] Unable to load ELF file \"%s\".",libmprof->name);
           exit(1);
         }
-
+        
         patch_mem_functions(pid,target,libmprof);
         
-        for(i = 0; i < LIBMPROF_NUM_PATCHED_LIBS; i++)
+        j = 0;
+        while(strlen(LIBMPROF_SHARED_MEM->libraries[j].name))
         {
-            j = 0;
-            while(strlen(LIBMPROF_SHARED_MEM->libraries[j].name))
+          if( strcmp(LIBMPROF_SHARED_MEM->libraries[j].name,"placeholder.so"))
+          {
+            
+            LIBMPROF_SHARED_MEM->libraries[j].elf = load_elf(find_file(LIBMPROF_SHARED_MEM->libraries[j].name,"."));
+            if(LIBMPROF_SHARED_MEM->libraries[j].elf == 0)
             {
-              if(!strcmp(LIBMPROF_SHARED_MEM->patched_lib_names[i],LIBMPROF_SHARED_MEM->libraries[j].name))
-              {
-                
-                LIBMPROF_SHARED_MEM->libraries[j].elf = load_elf(find_file(LIBMPROF_SHARED_MEM->libraries[j].name,"."));
-                if(LIBMPROF_SHARED_MEM->libraries[j].elf == 0)
-                {
-                  fprintf(stderr,"[mprof] Error: unable to locate shared object \"%s\" in current directory hierarchy.\n",LIBMPROF_SHARED_MEM->libraries[j].name);
-                  exit(1);
-                }
-                
-                fprintf(stderr,"[mprof] Patching \"%s\"...\n",LIBMPROF_SHARED_MEM->patched_lib_names[i]);
-  
-                patch_mem_functions(pid,&LIBMPROF_SHARED_MEM->libraries[j],libmprof);
-              }
-              j++;
-            }          
-        }
+              fprintf(stderr,"[mprof] Note: unable to locate shared object \"%s\" in current directory hierarchy.\n",LIBMPROF_SHARED_MEM->libraries[j].name);
+              goto cont;
+            }
+            
+            if(strcmp(LIBMPROF_SHARED_MEM->libraries[j].name,"libmprof.so"))
+            {
+              fprintf(stderr,"[mprof] Patching \"%s\"...\n",LIBMPROF_SHARED_MEM->libraries[j].name);
+
+              patch_mem_functions(pid,&LIBMPROF_SHARED_MEM->libraries[j],libmprof);
+            }
+          }
+          cont:
+          j++;
+        } 
 
         ptrace(PTRACE_CONT,pid,(caddr_t)1,0);
         
         for(;;)
         {
+          
           waitpid(pid,&status,0);
         
           if(WIFSTOPPED(status))
@@ -410,25 +437,14 @@ int main(int argc,char **argv)
        }
      }
   }
-  
-  fprintf(stderr,"[mprof] Program exited with code %d.\n",result);
-  
-  memset(buffer,0,512);
-  
-  while(num_bytes = read(MPROF_DEBUGGER,buffer,512))
-  {
-    buffer[num_bytes] = '\0';
-    fprintf(stderr,"%s",buffer);
-  }
-  
-  unlink(MPROF_DEBUGGER_NAME);
-    
+
   if(LIBMPROF_SHARED_MEM->config.output_to_stderr)
     remove(MPROF_OUTPUT_FILE_NAME);
   
   shmdt(LIBMPROF_SHARED_MEM);
   shmctl(SHMID,IPC_RMID,0);
 
+  fprintf(stderr,"[mprof] Program exited with code %d.\n",result);
   return 0;
 }
 
@@ -439,9 +455,11 @@ Library *lookup_library(char *name)
   while(strlen(LIBMPROF_SHARED_MEM->libraries[i].name))
   {
     if(!strcmp(file_part(LIBMPROF_SHARED_MEM->libraries[i].name),file_part(name)))
+    {
       return &LIBMPROF_SHARED_MEM->libraries[i];
+    }
     i++;
   }
   return 0;
 }
-        
+  

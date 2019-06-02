@@ -49,6 +49,7 @@ typedef RB_HEAD(MemoryBlockTree,MemoryBlock) MemoryBlockTree_t;
 typedef RB_HEAD(MemoryBlockSortedTree,MemoryBlockSorted) MemoryBlockSortedTree_t;
 typedef RB_HEAD(MemoryBreakdownTree,MemoryBreakdown) MemoryBreakdownTree_t;
 typedef RB_HEAD(FunctionBreakdownTree,FunctionBreakdown) FunctionBreakdownTree_t;
+typedef RB_HEAD(SortedLibraryTree,SortedLibrary) SortedLibraryTree_t;
 
 typedef struct TransactionPoint TransactionPoint;
 
@@ -93,10 +94,16 @@ struct GenericPath
   MemoryBlockTree_t memory_blocks;
 };
 
+typedef struct
+{
+  char function_names[MPROF_TRACE_DEPTH][256];
+  int too_deep;
+} Backtrace;
+
 #define TRANSACTION_PATH(FFS)\
 struct FFS\
 {\
-  char *name;\
+  Backtrace *trace;\
   TransactionPoint *transaction_point;\
   unsigned long int current_num_transactions;\
   unsigned long int current_bytes_allocated;\
@@ -111,7 +118,7 @@ struct FFS\
 TRANSACTION_PATH(TransactionPath);
 TRANSACTION_PATH(TransactionPathSorted);
 
-int compare_transaction_paths_by_name(TransactionPath *a1,TransactionPath *a2);
+int compare_transaction_paths_by_trace(TransactionPath *a1,TransactionPath *a2);
 int compare_transaction_paths_by_leaked_bytes(TransactionPathSorted *a1,TransactionPathSorted *a2);
 
 RB_PROTOTYPE(TransactionPathSortedTree,TransactionPathSorted,TransactionPathSortedLinks,compare_transaction_paths_by_name);
@@ -161,19 +168,17 @@ struct FunctionBreakdown
   char *name;
   unsigned long int total_bytes_allocated;
   unsigned long int current_bytes_allocated;
-  unsigned long int total_small_bytes_allocated;
-  unsigned long int total_medium_bytes_allocated;
-  unsigned long int total_large_bytes_allocated;
-  unsigned long int total_xlarge_bytes_allocated;
-  unsigned long int current_small_bytes_allocated;
-  unsigned long int current_medium_bytes_allocated;
-  unsigned long int current_large_bytes_allocated;
-  unsigned long int current_xlarge_bytes_allocated;
-
+  
   unsigned long int num_allocations_small;
   unsigned long int num_allocations_medium;
   unsigned long int num_allocations_large;
   unsigned long int num_allocations_xlarge;
+
+  unsigned long int num_frees_small;
+  unsigned long int num_frees_medium;
+  unsigned long int num_frees_large;
+  unsigned long int num_frees_xlarge;
+  
   unsigned long int num_calls;
   RB_ENTRY(FunctionBreakdown) FunctionBreakdownLinks;
 };
@@ -182,8 +187,28 @@ int compare_function_breakdowns(FunctionBreakdown *fb1,FunctionBreakdown *fb2);
 
 RB_PROTOTYPE(FunctionBreakdownTree,FunctionBreakdown,FunctionBreakdownLinks,compare_function_breakdowns);
 
+typedef struct SortedLibrary SortedLibrary;
+
+struct SortedLibrary
+{
+  char name[256];
+  unsigned char *elf;
+  DWARF_DATA *dwarf;
+  unsigned long int base_address;
+  RB_ENTRY(SortedLibrary) SortedLibraryLinks;
+};
+
+int compare_sorted_libraries(SortedLibrary *sl1,SortedLibrary *sl2);
+
+RB_PROTOTYPE(SortedLibraryTree,SortedLibrary,SortedLibraryLinks,compare_sorted_libraries);
+
 void memory_breakdown_table_out();
 void leak_table_out();
 void function_breakdown_table_out();
+void *mprof_malloc(size_t size);
+void *mprof_calloc(size_t num,size_t size);
+void *mprof_realloc(void *mem,size_t size);
+void mprof_free(void *mem);
+
 
 #endif

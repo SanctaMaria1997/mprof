@@ -160,6 +160,7 @@ unsigned long int get_elf_relocation(unsigned char *elf,char *name)
     section_names_index = section_header->sh_link;
   int i;
   int m;
+  
   for(i = 0; i < num_sections; i++)
   { 
     section_name = (char*)(elf + section_header[section_names_index].sh_offset + section_header[i].sh_name);
@@ -179,6 +180,7 @@ unsigned long int get_elf_relocation(unsigned char *elf,char *name)
       rela_size = section_header[i].sh_size;
     }
   }
+  
   Elf64_Rela *relocation = (Elf64_Rela*)(elf + rela_offset);
   char *symbol_name;
 
@@ -186,6 +188,7 @@ unsigned long int get_elf_relocation(unsigned char *elf,char *name)
   {
     symbol = ((Elf64_Sym*)(elf + dynsym_offset)) + ELF64_R_SYM(relocation->r_info);
     symbol_name = (char*)(elf + dynstr_offset + symbol->st_name);
+
     if(!strcmp(symbol_name,name))
     {
       success = 1;
@@ -195,7 +198,9 @@ unsigned long int get_elf_relocation(unsigned char *elf,char *name)
   }  
   
   if(success)
+  {
     return relocation->r_offset;
+  }
   else
     return 0;
 

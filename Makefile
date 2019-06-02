@@ -13,7 +13,7 @@ libmprof.o: libmprof.c
 dwarfy.o: dwarfy.c
 	cc -g -c -DFREEBSD -fPIC dwarfy.c -o dwarfy.o
 mprof_util.o: mprof_util.c
-	cc -g -c -fPIC mprof_util.c -o mprof_util.o
+	cc -g -c --fPIC mprof_util.c -o mprof_util.o
 elf_util.o: elf_util.c
 	cc -g -c -fPIC elf_util.c -o elf_util.o
 dwarfy_test: dwarfy_test.c

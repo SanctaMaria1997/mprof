@@ -31,7 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef MPROF_UTIL_H
 #define MPROF_UTIL_H
 
-char *file_part(char *path);
-char *find_file(char *file_name,char *directory);
+const char *file_part(const char *path);
+char *find_file(const char *file_name,char *directory);
 
 #endif
